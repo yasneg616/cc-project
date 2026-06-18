@@ -1,0 +1,2 @@
+/** @type {import('tailwindcss').Config} */
+module.exports = { content: ['./index.html', './src/**/*.{ts,tsx}'], theme: { extend: { colors: { studio: { bg:'#0d0e11', panel:'#121317', raised:'#191b20', line:'#282b32', text:'#d7d9de', muted:'#858b98', accent:'#d97757', blue:'#6ea8fe', green:'#57b894', yellow:'#d6a84e' } }, fontFamily:{sans:['Inter','Segoe UI','sans-serif'],mono:['Cascadia Code','Consolas','monospace']} } }, plugins: [] };

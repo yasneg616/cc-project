@@ -1,0 +1,44 @@
+.thinking-indicator {
+  margin: 8px 40px 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 13px;
+  border: 1px solid #39404b;
+  border-radius: 8px;
+  background: #151820;
+}
+.thinking-indicator svg { width: 17px; color: #d97757; animation: thinking-spin 1s linear infinite; }
+.thinking-indicator span { display: flex; flex-direction: column; gap: 3px; }
+.thinking-indicator b { font-size: 11px; }
+.thinking-indicator small { font-size: 9px; color: #7e8591; }
+@keyframes thinking-spin { to { transform: rotate(360deg); } }
+.stop-response {
+  height: 27px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px !important;
+  border-radius: 6px;
+  background: #4a2529 !important;
+  color: #f09aa2 !important;
+  font-size: 10px;
+  font-weight: 700;
+}
+.stop-response svg { width: 11px !important; }
+.approval-choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.approval-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px !important;
+  border: 1px solid #373a42 !important;
+  border-radius: 7px !important;
+  text-align: left;
+}
+.approval-choice b { font-size: 10px; }
+.approval-choice small { font-size: 8px; color: #818792; }
+.approval-choice.primary { background: #d97757 !important; color: #1d100c; }
+.approval-choice.primary small { color: #4e2b21; }
+.approval-choice.danger { border-color: #61363b !important; color: #e08b94; }
