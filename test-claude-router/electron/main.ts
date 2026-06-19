@@ -5,7 +5,7 @@ import { spawn as spawnChild } from 'node:child_process';
 import * as pty from 'node-pty';
 import dotenv from 'dotenv';
 import type { AgentEvent, GitInfo, TreeNode } from './types';
-import { estimateVisibleTokens, extractActivity, extractClaudeReply, extractUsage, isTerminalNoise, normalizeTerminalText } from './agent-output';
+import { estimateVisibleTokens, extractActivity, extractClaudeReply, extractUsage, hasTurnEndMarker, isTerminalNoise, normalizeTerminalText } from './agent-output';
 import { cloudOcr, cloudVision, formatContext, localOcr, parseFile, readUrl, webSearch, type ParsedContext, type SearchProvider } from './context-service';
 
 let win: BrowserWindow | null = null;
@@ -159,7 +159,7 @@ function parseAgent(raw: string) {
     }
     const activity = extractActivity(content);
     if (activity) emitAgent('status', activity, { turnId: agentTurn?.id, aggregate: true });
-    if (/input:\s*$/i.test(content) && agentTurn?.answered) finishAgentTurn('回复完成');
+    if (hasTurnEndMarker(content) && agentTurn?.answered) finishAgentTurn('回复完成');
     if (reply || isTerminalNoise(content)) continue;
     const plainPrompt = agentTurn?.prompt.replace(/\s+/g, ' ').trim();
     const plainContent = content.replace(/^you:\s*/i, '').replace(/\s+/g, ' ').trim();
@@ -194,7 +194,7 @@ function parseAgent(raw: string) {
     if (activity) emitAgent('status', activity, { turnId: agentTurn?.id, aggregate: true });
     // Human-readable TUI output is redrawn in place. Wait for its prompt marker
     // so an incomplete "claude: o" fragment is never rendered as the answer.
-    if (!/input:\s*$/i.test(content)) return;
+    if (!hasTurnEndMarker(content)) return;
     const reply = extractClaudeReply(content);
     if (!reply) return;
     if (agentTurn) {

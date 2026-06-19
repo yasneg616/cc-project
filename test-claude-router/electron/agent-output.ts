@@ -5,7 +5,7 @@ export type AgentUsage = {
   estimated?: boolean;
 };
 
-const STOP_MARKERS = /\s+(?:(?:baked|worked|thought)\s+for\b|auto-updating\b|esc to interrupt\b|input:\s*$)/i;
+const STOP_MARKERS = /\s+(?:(?:baked|worked|thought)\s+for\b|auto-updating\b|esc to interrupt\b|input:|press ctrl-c again to exit\b|composing\.{0,3})/i;
 
 export function normalizeTerminalText(value: string) {
   return value.replace(/\r\n/g, '\n').replace(/\r/g, '');
@@ -26,7 +26,7 @@ export function extractActivity(value: string) {
   if (/reading/i.test(value)) return '正在读取';
   if (/writing|editing/i.test(value)) return '正在编辑';
   if (/running|executing|testing/i.test(value)) return '正在运行';
-  if (/combobulating|thinking/i.test(value)) return '正在思考';
+  if (/combobulating|thinking|composing/i.test(value)) return '正在思考';
   return '';
 }
 
@@ -53,7 +53,11 @@ export function estimateVisibleTokens(value: string) {
 export function isTerminalNoise(value: string) {
   const text = value.trim();
   if (!text) return true;
-  return /^(?:input:|auto-updating.*|esc to interrupt.*|combobulating.*)$/i.test(text)
+  return /^(?:input:|auto-updating.*|esc to interrupt.*|combobulating.*|composing\.{0,3}.*)$/i.test(text)
     || /(?:thought|worked|baked) for\s+\d/i.test(text)
-    || /auto-updating|esc to interrupt/i.test(text);
+    || /auto-updating|esc to interrupt|press ctrl-c again to exit/i.test(text);
+}
+
+export function hasTurnEndMarker(value: string) {
+  return /\binput:/i.test(value);
 }

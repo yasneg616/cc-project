@@ -1,6 +1,6 @@
 {
   "name": "claude-code-studio",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "A professional Windows GUI shell for Claude Code and Claude Code Router",
   "main": "dist-electron/main.js",
   "author": "Claude Code Studio",
