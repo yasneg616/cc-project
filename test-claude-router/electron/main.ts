@@ -5,6 +5,7 @@ import { spawn as spawnChild } from 'node:child_process';
 import * as pty from 'node-pty';
 import dotenv from 'dotenv';
 import type { AgentEvent, GitInfo, TreeNode } from './types';
+import { estimateVisibleTokens, extractActivity, extractClaudeReply, extractUsage, hasTurnEndMarker, isTerminalNoise, normalizeTerminalText } from './agent-output';
 import { cloudOcr, cloudVision, formatContext, localOcr, parseFile, readUrl, webSearch, type ParsedContext, type SearchProvider } from './context-service';
 
 let win: BrowserWindow | null = null;
@@ -22,8 +23,9 @@ let agentPartialOffset = 0;
 let agentPartialTimer: NodeJS.Timeout | null = null;
 let lastAgentEvent = '';
 let lastAgentEventAt = 0;
-type AgentTurn = { prompt: string; active: boolean; answered: boolean; retried: boolean; timer: NodeJS.Timeout | null };
+type AgentTurn = { id: number; prompt: string; reply: string; startedAt: number; active: boolean; answered: boolean; retried: boolean; timer: NodeJS.Timeout | null; usage: { durationMs?: number; inputTokens?: number; outputTokens?: number } };
 let agentTurn: AgentTurn | null = null;
+let agentTurnSequence = 0;
 
 const safeSend = (channel: string, data: unknown) => {
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
@@ -40,8 +42,13 @@ const emitAgent = (type: AgentEvent['type'], content: string, meta?: Record<stri
 function finishAgentTurn(content: string, failed = false) {
   if (!agentTurn) return;
   if (agentTurn.timer) clearTimeout(agentTurn.timer);
+  const durationMs = agentTurn.usage.durationMs ?? Date.now() - agentTurn.startedAt;
+  const inputTokens = agentTurn.usage.inputTokens ?? estimateVisibleTokens(agentTurn.prompt);
+  const outputTokens = agentTurn.usage.outputTokens ?? estimateVisibleTokens(agentTurn.reply);
+  const estimated = agentTurn.usage.inputTokens === undefined || agentTurn.usage.outputTokens === undefined;
+  const turnId = agentTurn.id;
   agentTurn = null;
-  emitAgent('status', content, { turnDone: true, failed });
+  emitAgent('status', content, { turnDone: true, failed, turnId, durationMs, inputTokens, outputTokens, estimated });
 }
 function armAgentTurnTimer(delay: number) {
   if (!agentTurn) return;
@@ -63,6 +70,10 @@ function observeAgentTurn(content: string) {
   if (!agentTurn) return;
   const normalized = content.replace(/\s+/g, ' ').trim();
   if (!normalized) return;
+  const usage = extractUsage(normalized);
+  if (usage.durationMs !== undefined) agentTurn.usage.durationMs = usage.durationMs;
+  if (usage.inputTokens !== undefined) agentTurn.usage.inputTokens = usage.inputTokens;
+  if (usage.outputTokens !== undefined) agentTurn.usage.outputTokens = usage.outputTokens;
   if (/esc to interrupt|thought for|worked for|baked for|tool (?:use|call)|calling tool|thinking|searching|reading|writing|running|…/i.test(normalized)) {
     agentTurn.active = true;
     armAgentTurnTimer(60000);
@@ -72,9 +83,6 @@ function observeAgentTurn(content: string) {
     agentTurn.answered = true;
     armAgentTurnTimer(60000);
   }
-  if (/input:\s*$/i.test(normalized)) {
-    if (agentTurn.answered || /claude:|worked for|baked for/i.test(normalized)) finishAgentTurn('回复完成');
-  }
 }
 function writeAgentInput(text: string) {
   const prompt = text.replace(/[\u0000-\u001f\u007f]/g, '').trim();
@@ -82,7 +90,7 @@ function writeAgentInput(text: string) {
   if (agentTurn?.timer) clearTimeout(agentTurn.timer);
   if (agentPartialTimer) clearTimeout(agentPartialTimer);
   agentPartialTimer = null; agentBuffer = ''; agentPartialOffset = 0;
-  agentTurn = { prompt, active: false, answered: false, retried: false, timer: null };
+  agentTurn = { id: ++agentTurnSequence, prompt, reply: '', startedAt: Date.now(), active: false, answered: false, retried: false, timer: null, usage: {} };
   agent?.write(text);
   emitAgent('status', '任务已发送，等待 Claude CLI 确认…');
   armAgentTurnTimer(3000);
@@ -129,7 +137,7 @@ async function gitInfo(): Promise<GitInfo> {
 }
 
 function parseAgent(raw: string) {
-  agentBuffer += stripAnsi(raw).replace(/\r/g, '\n');
+  agentBuffer += normalizeTerminalText(stripAnsi(raw));
   const lines = agentBuffer.split('\n');
   agentBuffer = lines.pop() || '';
   const completedPartialOffset = agentPartialOffset;
@@ -140,6 +148,19 @@ function parseAgent(raw: string) {
     if (index === 0 && completedPartialOffset) content = lines[index].slice(completedPartialOffset).trim();
     if (!content) continue;
     observeAgentTurn(content);
+    const reply = extractClaudeReply(content);
+    if (reply) {
+      if (agentTurn) {
+        agentTurn.active = true;
+        agentTurn.answered = true;
+        agentTurn.reply += `${agentTurn.reply ? '\n' : ''}${reply}`;
+      }
+      emitAgent('output', reply, { turnId: agentTurn?.id });
+    }
+    const activity = extractActivity(content);
+    if (activity) emitAgent('status', activity, { turnId: agentTurn?.id, aggregate: true });
+    if (hasTurnEndMarker(content) && agentTurn?.answered) finishAgentTurn('回复完成');
+    if (reply || isTerminalNoise(content)) continue;
     const plainPrompt = agentTurn?.prompt.replace(/\s+/g, ' ').trim();
     const plainContent = content.replace(/^you:\s*/i, '').replace(/\s+/g, ' ').trim();
     if (plainPrompt && plainContent === plainPrompt) { emitAgent('status', 'Claude CLI 已回显任务，等待受理…'); continue; }
@@ -163,14 +184,27 @@ function parseAgent(raw: string) {
   }
   if (agentPartialTimer) clearTimeout(agentPartialTimer);
   agentPartialTimer = setTimeout(() => {
-    const content = agentBuffer.slice(agentPartialOffset);
+    const content = agentBuffer;
     if (!content.trim()) return;
-    agentPartialOffset = agentBuffer.length;
     observeAgentTurn(content);
     const plainPrompt = agentTurn?.prompt.replace(/\s+/g, ' ').trim();
     const plainContent = content.replace(/^you:\s*/i, '').replace(/\s+/g, ' ').trim();
     if (plainPrompt && plainContent === plainPrompt) return;
-    emitAgent('output', content, { append: true, partial: true });
+    const activity = extractActivity(content);
+    if (activity) emitAgent('status', activity, { turnId: agentTurn?.id, aggregate: true });
+    // Human-readable TUI output is redrawn in place. Wait for its prompt marker
+    // so an incomplete "claude: o" fragment is never rendered as the answer.
+    if (!hasTurnEndMarker(content)) return;
+    const reply = extractClaudeReply(content);
+    if (!reply) return;
+    if (agentTurn) {
+      agentTurn.active = true;
+      agentTurn.answered = true;
+      agentTurn.reply = reply;
+    }
+    emitAgent('output', reply, { turnId: agentTurn?.id });
+    if (agentTurn?.answered) finishAgentTurn('回复完成');
+    agentPartialOffset = agentBuffer.length;
   }, 120);
 }
 function flushAgentInput() {
